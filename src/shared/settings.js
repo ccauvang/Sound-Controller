@@ -56,17 +56,22 @@ export async function getDomain(host) {
   return Object.hasOwn(domains, host) ? cleanDomain(domains[host]) : null; // hasOwn - a host named "constructor" must not hit Object.prototype
 };
 
-export function saveDomainVolume(host, volume) {
+function saveDomain(host, patch) {
   if (!validHost(host)) return Promise.resolve();
   return serial(async () => {
     const domains = (await chrome.storage.local.get({ [KEYS.DOMAINS]: {} }))[KEYS.DOMAINS];
     const prev = Object.hasOwn(domains, host) ? cleanDomain(domains[host]) : null;
-    const eq = prev?.eq ?? flatEq();
-    if (volume === 100 && isFlat(eq)) delete domains[host]; // default state needs no row
-    else domains[host] = { volume, eq };
+    // patch holds only the changed half - volume save must not wipe eq and the other way round
+    const next = cleanDomain({ volume: prev?.volume ?? 100, eq: prev?.eq ?? flatEq(), ...patch });
+    if (!next) return;
+    if (next.volume === 100 && isFlat(next.eq)) delete domains[host]; // default state needs no row
+    else domains[host] = next;
     await chrome.storage.local.set({ [KEYS.DOMAINS]: domains });
   });
 };
+
+export const saveDomainVolume = (host, volume) => saveDomain(host, { volume });
+export const saveDomainEq = (host, eq) => saveDomain(host, { eq });
 
 // ---------- export / import ----------
 export async function buildExport() {
@@ -95,7 +100,7 @@ export function parseImport(text) {
   };
 };
 
-export async function importSettings(text, replace) {
+async function doImport(text, replace) {
   const parsed = parseImport(text); // throws here = nothing written at all
   const cur = await chrome.storage.local.get({ [KEYS.RESTORE]: true, [KEYS.DOMAINS]: {} });
   const domains = replace ? parsed.domains : cleanDomains({ ...cleanDomains(cur[KEYS.DOMAINS]), ...parsed.domains });
@@ -107,13 +112,16 @@ export async function importSettings(text, replace) {
   return { imported: Object.keys(parsed.domains).length, skipped: parsed.skipped };
 };
 
-export async function hasBackup() {
-  return (await chrome.storage.local.get(KEYS.BACKUP))[KEYS.BACKUP] != null;
-};
-
-export async function undoImport() {
+async function doUndo() {
   const b = (await chrome.storage.local.get(KEYS.BACKUP))[KEYS.BACKUP];
   if (!b) throw new Error("Nothing to undo");
   await chrome.storage.local.set({ [KEYS.RESTORE]: b.restoreEnabled !== false, [KEYS.DOMAINS]: cleanDomains(b.domains) });
   await chrome.storage.local.remove(KEYS.BACKUP);
 };
+
+export async function hasBackup() {
+  return (await chrome.storage.local.get(KEYS.BACKUP))[KEYS.BACKUP] != null;
+};
+
+export const importSettings = (text, replace) => serial(() => doImport(text, replace));
+export const undoImport = () => serial(doUndo);

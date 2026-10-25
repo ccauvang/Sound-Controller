@@ -8,6 +8,8 @@ const MAX_INDEX = VOLUME_STEPS.length - 1;
 const MARK = (indexOfVolume(VOLUME_DEFAULT) / MAX_INDEX) * 100;
 const FALLBACK_ICON = "../../assets/icon/icon-16.png";
 const captured = new Set(); // tabs with a live capture - only these can be changed without opening popup on them
+const HINT_LOCKED = 'Locked. Click "Open it", then open this popup on that tab once.';
+const HINT_CURRENT = "Current tab. Use the controls above.";
 
 // per tab state lives here until the capture step moves it into the service worker - popup close wipes it
 const state = new Map();
@@ -24,6 +26,8 @@ const say = (el, text, isError = true) => {
 };
 
 const fmtHz = (f) => (f >= 1000 ? `${f / 1000}k` : String(f));
+
+const isFlat = (eq) => eq.every((g) => g === 0);
 
 function setIcon(img, url) {
     img.onerror = () => { img.onerror = null; img.src = FALLBACK_ICON; }; // dead favicon urls are common
@@ -57,6 +61,7 @@ function setupRange(range, onVolume) {
         onVolume(VOLUME_STEPS[range.value]);
     });
     range.addEventListener("wheel", (e) => {
+        if (range.disabled) return; // nudge fires input by script - disabled flag does not stop it. return before preventDefault so the popup still scrolls
         e.preventDefault(); // else the popup scrolls too
         nudge(range, e.deltaY < 0 ? 1 : -1);
     }, { passive: false });
@@ -73,7 +78,13 @@ async function applyVolume(tabId, volume, force = false) {
     syncMaster(tabId);
     syncRow(tabId);
 
-    const res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.SET_VOLUME, tabId, volume, force });
+    let res;
+    try {
+        res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.SET_VOLUME, tabId, volume, force });
+    } catch (e) {
+        res = { error: e.message }; // falls into the revert branch below
+    };
+
     if (res?.error) {
         st.volume = prev;
         syncMaster(tabId);
@@ -105,14 +116,18 @@ function syncRow(tabId) {
     const row = rows.get(tabId);
     if (!row) return;
     const st = getState(tabId);
-    const locked = !(captured.has(tabId) || masterTab?.id === tabId);
+    const isMaster = masterTab?.id === tabId;
+    // master row is a mirror only - two sliders on one tab would fight, the big one above owns it
+    const blocked = isMaster || !captured.has(tabId);
     setRange(row.range, st.volume);
     row.vol.textContent = `${st.volume}%`;
     row.vol.classList.toggle("boost", st.volume > 100);
     row.vol.classList.toggle("supperboost", st.volume >= 500);
-    row.eq.hidden = !st.eqOn;
-    row.range.disabled = locked;
-    row.hint.hidden = !locked;
+    row.eq.hidden = !(st.eqOn && !isFlat(st.eq));
+    row.range.disabled = blocked;
+    row.open.hidden = isMaster; // already on this tab
+    row.hint.hidden = !blocked;
+    row.hint.textContent = isMaster ? HINT_CURRENT : HINT_LOCKED;
 };
 
 // ---------- master controls ----------
@@ -125,10 +140,22 @@ $("volReset").onclick = () => masterTab && applyVolume(masterTab.id, VOLUME_DEFA
 // ---------- EQ ----------
 const eqSliders = [];
 
-function pushEq() {
-    const st = getState(masterTab.id);
-    console.log("[eq]", masterTab.id, st.eqOn ? st.eq : "bypass"); // closed panel = bypass, values kept for reopen
-    syncRow(masterTab.id);
+async function pushEq() {
+    const tabId = masterTab.id;
+    const st = getState(tabId);
+    const eq = st.eqOn ? st.eq : EQ_PRESETS.flat; // closed panel = bypass, values kept for reopen
+    syncRow(tabId);
+    let res;
+    try {
+        res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.SET_EQ, tabId, eq, volume: st.volume });
+    } catch (e) {
+        return say($("volMsg"), e.message);
+    };
+    if (res?.error) return say($("volMsg"), res.error);
+    if (res?.captured) {
+        captured.add(tabId);
+        syncRow(tabId);
+    };
 };
 
 function buildEq() {
@@ -224,7 +251,8 @@ function buildRow(tab) {
         vol: li.querySelector(".row__vol"),
         eq: li.querySelector(".row__eq"),
         range: li.querySelector(".slider"),
-        hint: li.querySelector(".row__hint")
+        hint: li.querySelector(".row__hint"),
+        open: li.querySelector(".row__open")
     };
 
     setupRange(row.range, (v) => applyVolume(tab.id, v));
@@ -281,17 +309,20 @@ function applyTabs(tabs) {
 };
 
 async function load() {
-    const tabs = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.GET_AUDIBLE_TABS });
-    applyTabs(tabs);
+    const tabs = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.GET_AUDIBLE_TABS }).catch(() => []);
+    applyTabs(Array.isArray(tabs) ? tabs : []); // worker error comes back as an object, not an array
 };
 
 async function openOnTab(tab) {
     // popup open on this tab is the only moment chrome allows capture - restore the saved volume, or at least unlock
     const res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.RESTORE_TAB, tabId: tab.id });
     if (res?.error) return say($("volMsg"), res.error);
-    if (res.volume !== null) {
+    if (res?.volume != null) {
         captured.add(tab.id);
-        getState(tab.id).volume = res.volume;
+        const st = getState(tab.id);
+        st.volume = res.volume;
+        st.eq = [...res.eq];
+        st.eqOn = !isFlat(res.eq);
         syncMaster(tab.id);
         syncRow(tab.id);
     } else if (tab.audible) {
@@ -305,8 +336,11 @@ async function hydrate() {
     const live = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.GET_AUDIO_STATES });
     if (!live || live.error) return;
     for (const [id, a] of Object.entries(live)) {
+        const st = getState(Number(id));
         captured.add(Number(id));
-        getState(Number(id)).volume = a.volume;
+        st.volume = a.volume;
+        st.eq = [...a.eq];
+        st.eqOn = !isFlat(a.eq);
     };
 };
 
@@ -329,36 +363,53 @@ $("gear").onclick = () => {
 
 // ---------- export / import ----------
 $("exportBtn").onclick = async () => {
-  const data = await buildExport();
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "sound-controller-settings.json" });
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  say($("settingsMsg"), `Exported ${Object.keys(data.domains).length} sites`, false);
+    const data = await buildExport();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "sound-controller-settings.json" });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    say($("settingsMsg"), `Exported ${Object.keys(data.domains).length} sites`, false);
 };
 
 $("importBtn").onclick = () => $("importFile").click();
 $("importFile").onchange = async () => {
-  const file = $("importFile").files[0];
-  $("importFile").value = ""; // same file twice must still fire change
-  if (!file) return;
-  try {
-    if (file.size > MAX_IMPORT_BYTES) throw new Error("File too big");
-    const r = await importSettings(await file.text(), $("importReplace").checked);
-    say($("settingsMsg"), `Imported ${r.imported} sites${r.skipped ? `, skipped ${r.skipped} bad rows` : ""}. Applies when you open each site.`, false);
-  } catch (e) {
-    say($("settingsMsg"), e.message);
-  };
-  await refreshSettingsUi();
+    const file = $("importFile").files[0];
+    $("importFile").value = ""; // same file twice must still fire change
+    if (!file) return;
+    try {
+        if (file.size > MAX_IMPORT_BYTES) throw new Error("File too big");
+        const r = await importSettings(await file.text(), $("importReplace").checked);
+        say($("settingsMsg"), `Imported ${r.imported} sites${r.skipped ? `, skipped ${r.skipped} bad rows` : ""}. Applies when you open each site.`, false);
+    } catch (e) {
+        say($("settingsMsg"), e.message);
+    };
+    await refreshSettingsUi();
 };
 
 $("undoImport").onclick = async () => {
-  try { await undoImport(); say($("settingsMsg"), "Import undone", false); } catch (e) { say($("settingsMsg"), e.message); };
-  await refreshSettingsUi();
+    try { await undoImport(); say($("settingsMsg"), "Import undone", false); } catch (e) { say($("settingsMsg"), e.message); };
+    await refreshSettingsUi();
 };
 
 chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.target === TARGET.POPUP && msg.action === ACTION.AUDIBLE_CHANGED) load(); // live refresh while popup open
+    if (msg.target !== TARGET.POPUP) return;
+    if (msg.action === ACTION.AUDIBLE_CHANGED) load(); // live refresh while popup open
+    if (msg.action === ACTION.TAB_RESET) {
+        // popup state is stale after the worker reset the tab - a later eq tick would resend old bands
+        const st = getState(msg.tabId);
+        st.volume = msg.volume;
+        st.eq = [...msg.eq];
+        st.eqOn = !isFlat(msg.eq);
+        syncMaster(msg.tabId);
+        syncRow(msg.tabId);
+    };
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (tabId !== masterTab?.id) return;
+    // title and favicon land after the url change - the reset message cannot carry them
+    if (changeInfo.title) $("targetName").textContent = changeInfo.title;
+    if (changeInfo.favIconUrl) setIcon($("targetIcon"), changeInfo.favIconUrl);
 });
 
 buildEq();

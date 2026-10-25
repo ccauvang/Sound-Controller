@@ -11,5 +11,8 @@ export const ACTION = {
   GET_AUDIO_STATES: "get-audio-states",
   HAS_TAB: "has-tab",
   TAB_CLOSED: "tab-closed",
-  RESTORE_TAB: "restore-tab"
+  RESTORE_TAB: "restore-tab",
+  SET_EQ: "set-eq",
+  SYNC_HOST: "sync-host",
+  TAB_RESET: "tab-reset"
 };
