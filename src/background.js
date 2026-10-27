@@ -104,7 +104,6 @@ function persistVolume(tabId, volume) {
     }, 300));
 };
 
-// const persistVolume = (tabId, volume) => persistLater(tabId, "volume", (host) => saveDomainVolume(host, volume));
 const persistEq = (tabId, eq) => persistLater(tabId, "eq", (host) => saveDomainEq(host, eq));
 
 async function restoreTab(tabId) {
