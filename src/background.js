@@ -90,6 +90,18 @@ const setVolume = (tabId, volume, opts) => enqueue(tabId, () => doSetVolume(tabI
 const setEq = (tabId, eq, volume, opts) => enqueue(tabId, () => doSetEq(tabId, eq, volume, opts)); // same queue as volume - first capture must not race
 const saveTimers = new Map(); // tabId -> timer
 
+async function persistLater(tabId, kind, save) {
+    try {
+        if (!(await loadSettings()).restoreEnabled) return;
+        const tab = await chrome.tabs.get(tabId);
+        if (!/^https?:/.test(tab.url ?? "")) return;
+        const host = hostOf(tab.url);
+        const key = `${host}|${kind}`; // kind in key - an eq tick must not cancel a pending volume write
+        clearTimeout(saveTimers.get(key));
+        saveTimers.set(key, setTimeout(() => { saveTimers.delete(key); save(host); }, 300));
+    } catch { }; // tab closed mid-drag - nothing to save
+};
+
 function persistVolume(tabId, volume) {
     clearTimeout(saveTimers.get(tabId));
     // drag fires dozens of ticks - storage read and tabs.get run once after drag stops, not per tick
