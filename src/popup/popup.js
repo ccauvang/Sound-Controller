@@ -241,7 +241,7 @@ function buildRow(tab) {
     li.className = "row";
     li.innerHTML = `
     <button class="row__head" type="button" aria-expanded="false">
-      <img class="row__icon" width="16" height="16" alt="">
+      <img class="row__icon" width="16" height="16" alt="Tab Icon" draggable="false">
       <span class="row__name"></span>
       <span class="row__vol"></span>
       <span class="row__eq" hidden>EQ</span>
