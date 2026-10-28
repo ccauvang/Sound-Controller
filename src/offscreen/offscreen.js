@@ -4,11 +4,11 @@ import { EQ_BANDS, EQ_GAIN_RANGE, EQ_PRESETS } from "../shared/eq.js";
 const audio = new Map(); // tabId -> { ctx, stream, gain, volume }
 
 function release(tabId) {
-    const a = audio.get(tabId);
-    if (!a) return;
+    const hasAudioTab = audio.get(tabId);
+    if (!hasAudioTab) return;
     audio.delete(tabId);
-    a.stream.getTracks().forEach((t) => t.stop());
-    a.ctx.close();
+    hasAudioTab.stream.getTracks().forEach((t) => t.stop());
+    hasAudioTab.ctx.close();
 };
 
 function buildFilters(ctx) {
@@ -44,20 +44,20 @@ async function capture(tabId, streamId, volume, host) {
 };
 
 function setGain(tabId, volume) {
-    const a = audio.get(tabId);
+    const hasAudioTab = audio.get(tabId);
     volume = Math.min(600, Math.max(0, Number(volume)));
-    a.volume = volume;
+    hasAudioTab.volume = volume;
     // 15ms ramp - hard jumps per slider tick make clicks
-    a.gain.gain.setTargetAtTime(volume / 100, a.ctx.currentTime, 0.015);
+    hasAudioTab.gain.gain.setTargetAtTime(volume / 100, hasAudioTab.ctx.currentTime, 0.015);
 };
 
 function setEq(tabId, gains) {
     if (!Array.isArray(gains) || gains.length !== EQ_BANDS.length) throw new Error("bad eq");
-    const a = audio.get(tabId);
+    const hasAudioTab = audio.get(tabId);
     // never trust the sender - a bad gain value is loud, not just wrong
     const safe = gains.map((g) => Math.min(EQ_GAIN_RANGE[1], Math.max(EQ_GAIN_RANGE[0], Number(g) || 0)));
-    a.eq = safe;
-    safe.forEach((g, i) => a.filters[i].gain.setTargetAtTime(g, a.ctx.currentTime, 0.015));
+    hasAudioTab.eq = safe;
+    safe.forEach((g, i) => hasAudioTab.filters[i].gain.setTargetAtTime(g, hasAudioTab.ctx.currentTime, 0.015));
 };
 
 async function handle(msg) {
@@ -85,9 +85,9 @@ async function handle(msg) {
             return { ok: true };
         }
         case ACTION.SYNC_HOST: {
-            const a = audio.get(msg.tabId);
-            if (!a || a.host === msg.host) return { changed: false };
-            a.host = msg.host;
+            const hasAudioTab = audio.get(msg.tabId);
+            if (!hasAudioTab || hasAudioTab.host === msg.host) return { changed: false };
+            hasAudioTab.host = msg.host;
             return { changed: true };
         }
         case ACTION.TAB_CLOSED: {

@@ -141,13 +141,13 @@ const BADGE_COLORS = {
 
 async function updateBadge(tabId) {
     try {
-        const a = (await getAudioStates())[tabId];
-        if (!a) return;
-        const changed = !!a && (a.volume !== 100 || a.eq.some((g) => g !== 0)); // captured at default = effectively off, no badge
-        const text = !changed ? "" : a.volume !== 100 ? String(a.volume) : "EQ";
+        const audioStates = (await getAudioStates())[tabId];
+        if (!audioStates) return;
+        const changed = !!audioStates && (audioStates.volume !== 100 || audioStates.eq.some((g) => g !== 0)); // captured at default = effectively off, no badge
+        const text = !changed ? "" : audioStates.volume !== 100 ? String(audioStates.volume) : "EQ";
         await chrome.action.setBadgeText({ tabId, text });
         if (!changed) return;
-        const [bg, fg] = a.volume >= 500 ? BADGE_COLORS.loud : a.volume > 100 ? BADGE_COLORS.boost : BADGE_COLORS.normal;
+        const [bg, fg] = audioStates.volume >= 500 ? BADGE_COLORS.loud : audioStates.volume > 100 ? BADGE_COLORS.boost : BADGE_COLORS.normal;
         await chrome.action.setBadgeBackgroundColor({ tabId, color: bg });
         await chrome.action.setBadgeTextColor({ tabId, color: fg });
     } catch { }; // tab closed mid-update

@@ -44,15 +44,15 @@ function cleanDomains(raw) {
 
 // ---------- reads and writes ----------
 export async function loadSettings() {
-  const s = await chrome.storage.local.get({ [KEYS.RESTORE]: true });
-  return { restoreEnabled: s[KEYS.RESTORE] !== false };
+  const settings = await chrome.storage.local.get({ [KEYS.RESTORE]: true });
+  return { restoreEnabled: settings[KEYS.RESTORE] !== false };
 };
 
 export const setRestoreEnabled = (on) => chrome.storage.local.set({ [KEYS.RESTORE]: !!on });
 
 export async function getTheme() {
-  const t = (await chrome.storage.local.get(KEYS.THEME))[KEYS.THEME];
-  return t === "light" || t === "dark" ? t : null; // null = follow system
+  const theme = (await chrome.storage.local.get(KEYS.THEME))[KEYS.THEME];
+  return theme === "light" || theme === "dark" ? theme : null; // null = follow system
 };
 
 export const setTheme = (t) => chrome.storage.local.set({ [KEYS.THEME]: t });
@@ -97,13 +97,13 @@ export function parseImport(text) {
   let raw;
   try { raw = JSON.parse(text); } catch { throw new Error("Not a valid JSON file"); };
   if (raw?.app !== APP || raw.schema !== SCHEMA) throw new Error("Not a Sound Controller settings file");
-  const d = raw.domains ?? {};
-  if (typeof d !== "object" || Array.isArray(d)) throw new Error("Bad file: domains must be an object");
-  const domains = cleanDomains(d);
+  const rawDomain = raw.domains ?? {};
+  if (typeof rawDomain !== "object" || Array.isArray(rawDomain)) throw new Error("Bad file: domains must be an object");
+  const domains = cleanDomains(rawDomain);
   return {
     restoreEnabled: raw.settings?.restoreEnabled !== false,
     domains,
-    skipped: Object.keys(d).length - Object.keys(domains).length
+    skipped: Object.keys(rawDomain).length - Object.keys(domains).length
   };
 };
 
@@ -120,9 +120,9 @@ async function doImport(text, replace) {
 };
 
 async function doUndo() {
-  const b = (await chrome.storage.local.get(KEYS.BACKUP))[KEYS.BACKUP];
-  if (!b) throw new Error("Nothing to undo");
-  await chrome.storage.local.set({ [KEYS.RESTORE]: b.restoreEnabled !== false, [KEYS.DOMAINS]: cleanDomains(b.domains) });
+  const backup = (await chrome.storage.local.get(KEYS.BACKUP))[KEYS.BACKUP];
+  if (!backup) throw new Error("Nothing to undo");
+  await chrome.storage.local.set({ [KEYS.RESTORE]: backup.restoreEnabled !== false, [KEYS.DOMAINS]: cleanDomains(backup.domains) });
   await chrome.storage.local.remove(KEYS.BACKUP);
 };
 

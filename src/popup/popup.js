@@ -72,9 +72,9 @@ let masterTab = null;
 const rows = new Map();
 
 async function applyVolume(tabId, volume, force = false) {
-    const st = getState(tabId);
-    const prev = st.volume;
-    st.volume = volume;
+    const state = getState(tabId);
+    const prev = state.volume;
+    state.volume = volume;
     syncMaster(tabId);
     syncRow(tabId);
 
@@ -86,7 +86,7 @@ async function applyVolume(tabId, volume, force = false) {
     };
 
     if (res?.error) {
-        st.volume = prev;
+        state.volume = prev;
         syncMaster(tabId);
         syncRow(tabId);
         const msg = res.error.includes("invoked") ? "Cannot capture this tab. Open the popup on it first." : res.error;
@@ -101,29 +101,29 @@ async function applyVolume(tabId, volume, force = false) {
 
 function syncMaster(tabId) {
     if (!masterTab || masterTab.id !== tabId) return;
-    const st = getState(tabId);
-    setRange($("volRange"), st.volume);
-    $("volText").textContent = st.volume;
-    $("volText").classList.toggle("boost", st.volume > 100);
-    $("volText").classList.toggle("supperboost", st.volume >= 500);
-    $("volText").classList.toggle("mute", st.volume == 0);
-    eqSliders.forEach((s, i) => { s.value = st.eq[i]; });
-    $("eqToggle").setAttribute("aria-expanded", String(st.eqOn));
-    $("eqBody").classList.toggle("open", st.eqOn);
+    const state = getState(tabId);
+    setRange($("volRange"), state.volume);
+    $("volText").textContent = state.volume;
+    $("volText").classList.toggle("boost", state.volume > 100);
+    $("volText").classList.toggle("supperboost", state.volume >= 500);
+    $("volText").classList.toggle("mute", state.volume == 0);
+    eqSliders.forEach((s, i) => { s.value = state.eq[i]; });
+    $("eqToggle").setAttribute("aria-expanded", String(state.eqOn));
+    $("eqBody").classList.toggle("open", state.eqOn);
 };
 
 function syncRow(tabId) {
     const row = rows.get(tabId);
     if (!row) return;
-    const st = getState(tabId);
+    const state = getState(tabId);
     const isMaster = masterTab?.id === tabId;
     // master row is a mirror only - two sliders on one tab would fight, the big one above owns it
     const blocked = isMaster || !captured.has(tabId);
-    setRange(row.range, st.volume);
-    row.vol.textContent = `${st.volume}%`;
-    row.vol.classList.toggle("boost", st.volume > 100);
-    row.vol.classList.toggle("supperboost", st.volume >= 500);
-    row.eq.hidden = !(st.eqOn && !isFlat(st.eq));
+    setRange(row.range, state.volume);
+    row.vol.textContent = `${state.volume}%`;
+    row.vol.classList.toggle("boost", state.volume > 100);
+    row.vol.classList.toggle("supperboost", state.volume >= 500);
+    row.eq.hidden = !(state.eqOn && !isFlat(state.eq));
     row.range.disabled = blocked;
     row.open.hidden = isMaster; // already on this tab
     row.hint.hidden = !blocked;
@@ -142,12 +142,12 @@ const eqSliders = [];
 
 async function pushEq() {
     const tabId = masterTab.id;
-    const st = getState(tabId);
-    const eq = st.eqOn ? st.eq : EQ_PRESETS.flat; // closed panel = bypass, values kept for reopen
+    const state = getState(tabId);
+    const eq = state.eqOn ? state.eq : EQ_PRESETS.flat; // closed panel = bypass, values kept for reopen
     syncRow(tabId);
     let res;
     try {
-        res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.SET_EQ, tabId, eq, volume: st.volume });
+        res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.SET_EQ, tabId, eq, volume: state.volume });
     } catch (e) {
         return say($("volMsg"), e.message);
     };
@@ -202,10 +202,10 @@ function buildEq() {
 
 $("eqToggle").onclick = () => {
     if (!masterTab) return;
-    const st = getState(masterTab.id);
-    st.eqOn = !st.eqOn;
-    $("eqToggle").setAttribute("aria-expanded", String(st.eqOn));
-    $("eqBody").classList.toggle("open", st.eqOn);
+    const state = getState(masterTab.id);
+    state.eqOn = !state.eqOn;
+    $("eqToggle").setAttribute("aria-expanded", String(state.eqOn));
+    $("eqBody").classList.toggle("open", state.eqOn);
     pushEq();
 };
 
@@ -330,10 +330,10 @@ async function openOnTab(tab) {
     if (res?.error) return say($("volMsg"), res.error);
     if (res?.volume != null) {
         captured.add(tab.id);
-        const st = getState(tab.id);
-        st.volume = res.volume;
-        st.eq = [...res.eq];
-        st.eqOn = !isFlat(res.eq);
+        const state = getState(tab.id);
+        state.volume = res.volume;
+        state.eq = [...res.eq];
+        state.eqOn = !isFlat(res.eq);
         syncMaster(tab.id);
         syncRow(tab.id);
     } else if (tab.audible) {
@@ -347,11 +347,11 @@ async function hydrate() {
     const live = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.GET_AUDIO_STATES });
     if (!live || live.error) return;
     for (const [id, a] of Object.entries(live)) {
-        const st = getState(Number(id));
+        const state = getState(Number(id));
         captured.add(Number(id));
-        st.volume = a.volume;
-        st.eq = [...a.eq];
-        st.eqOn = !isFlat(a.eq);
+        state.volume = a.volume;
+        state.eq = [...a.eq];
+        state.eqOn = !isFlat(a.eq);
     };
 };
 
@@ -407,10 +407,10 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === ACTION.AUDIBLE_CHANGED) load(); // live refresh while popup open
     if (msg.action === ACTION.TAB_RESET) {
         // popup state is stale after the worker reset the tab - a later eq tick would resend old bands
-        const st = getState(msg.tabId);
-        st.volume = msg.volume;
-        st.eq = [...msg.eq];
-        st.eqOn = !isFlat(msg.eq);
+        const state = getState(msg.tabId);
+        state.volume = msg.volume;
+        state.eq = [...msg.eq];
+        state.eqOn = !isFlat(msg.eq);
         syncMaster(msg.tabId);
         syncRow(msg.tabId);
     };
