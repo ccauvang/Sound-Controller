@@ -1,7 +1,7 @@
 import { TARGET, ACTION } from "../shared/messages.js";
 import { VOLUME_STEPS, VOLUME_DEFAULT, indexOfVolume } from "../shared/volume.js";
 import { EQ_BANDS, EQ_GAIN_RANGE, EQ_PRESETS } from "../shared/eq.js";
-import { hostOf, loadSettings, setRestoreEnabled, buildExport, importSettings, undoImport, hasBackup, MAX_IMPORT_BYTES } from "../shared/settings.js";
+import { hostOf, loadSettings, setRestoreEnabled, buildExport, importSettings, undoImport, hasBackup, getTheme, setTheme, MAX_IMPORT_BYTES } from "../shared/settings.js";
 
 const $ = (id) => document.getElementById(id);
 const MAX_INDEX = VOLUME_STEPS.length - 1;
@@ -219,6 +219,17 @@ restoreSw.onclick = async () => {
     await setRestoreEnabled(on);
 };
 
+// ---------- theme ----------
+const root = document.documentElement;
+const systemLight = matchMedia("(prefers-color-scheme: light)");
+const currentTheme = () => root.dataset.theme ?? (systemLight.matches ? "light" : "dark");
+
+$("theme").onclick = async () => {
+    const next = currentTheme() === "dark" ? "light" : "dark";
+    root.dataset.theme = next;
+    await setTheme(next);
+};
+
 async function refreshSettingsUi() {
     setSwitchUi((await loadSettings()).restoreEnabled);
     $("undoImport").hidden = !(await hasBackup());
@@ -411,6 +422,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.title) $("targetName").textContent = changeInfo.title;
     if (changeInfo.favIconUrl) setIcon($("targetIcon"), changeInfo.favIconUrl);
 });
+
+root.dataset.theme = currentTheme(); // sync first so system-light users see no dark flash
+const savedTheme = await getTheme();
+if (savedTheme) root.dataset.theme = savedTheme;
 
 buildEq();
 await refreshSettingsUi();

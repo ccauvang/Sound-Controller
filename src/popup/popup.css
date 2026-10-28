@@ -27,30 +27,44 @@
     --warm-soft: rgba(255, 176, 32, 0.16);
     --danger: #ff3d3d;
     --mute: #313131;
-}
-
-@media (prefers-color-scheme: light) {
-    :root {
-        --bg: #F5F7FA;
-        --surface: #FFFFFF;
-        --surface-2: #EDF1F6;
-        --line: #D9E0E9;
-        --text: #161B22;
-        --dim: #5F6B7A;
-        --accent: #1478E0;
-        --warm: #E08A00;
-        --warm-soft: rgba(224, 138, 0, 0.16);
-    }
+    --bandTrackLight: #CBD3DE;
+    color-scheme: dark;
 }
 
 * {
     box-sizing: border-box;
 }
 
+html {
+    width: 360px;
+    background: var(--bg);
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border: 2px solid var(--bg);
+    /* border same as track makes thumb look inset and slim */
+    border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--dim);
+}
+
 body {
-    width: 340px;
+    width: 100%;
     margin: 0;
-    padding: 12px;
+    padding: 15px;
     background: var(--bg);
     color: var(--text);
     font: 13px/1.4 var(--font-body);
@@ -155,7 +169,7 @@ button {
     height: 30px;
     padding: 0;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 5px;
     background: var(--surface-2);
     font-size: 18px;
     line-height: 1;
@@ -258,7 +272,7 @@ button {
 .btn {
     padding: 6px 12px;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 5px;
     background: var(--surface-2);
     transition: border-color 0.15s;
 }
@@ -439,7 +453,7 @@ button {
 .empty {
     padding: 14px;
     border: 1px dashed var(--line);
-    border-radius: 12px;
+    border-radius: 5px;
     text-align: center;
     color: var(--dim);
 }
@@ -602,12 +616,32 @@ button {
     color: var(--dim);
 }
 
-@media (prefers-reduced-motion: reduce) {
+.theme-moon {
+    display: none;
+}
 
-    *,
-    *::before,
-    *::after {
-        animation-duration: 0.01ms !important;
-        transition-duration: 0.01ms !important;
-    }
+:root[data-theme="light"] .theme-sun {
+    display: none;
+}
+
+:root[data-theme="light"] .theme-moon {
+    display: block;
+}
+
+:root[data-theme="light"] {
+    --bg: #F5F7FA;
+    --surface: #FFFFFF;
+    --surface-2: #EDF1F6;
+    --line: #D9E0D9;
+    --text: #161B22;
+    --icon: #161B22;
+    --dim: #5F6B7A;
+    --accent: #1478E0;
+    --warm: #E08A00;
+    --warm-soft: rgba(224, 138, 0, 0.16);
+    color-scheme: light;
+}
+
+:root[data-theme="light"] .eq-slider::-webkit-slider-runnable-track {
+    background: var(--bandTrackLight);
 }

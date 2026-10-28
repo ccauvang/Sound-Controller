@@ -1,6 +1,6 @@
 import { EQ_BANDS, EQ_GAIN_RANGE } from "./eq.js";
 
-export const KEYS = { RESTORE: "restoreEnabled", DOMAINS: "domains", BACKUP: "backup" };
+export const KEYS = { RESTORE: "restoreEnabled", DOMAINS: "domains", BACKUP: "backup", THEME: "theme" };
 export const MAX_IMPORT_BYTES = 1000000;
 const APP = "sound-controller-eq";
 const SCHEMA = 1;
@@ -20,7 +20,7 @@ export const hostOf = (url) => {
 
 // one write at a time - two hosts saving together would both read old data and one would be lost
 let chain = Promise.resolve();
-const serial = (fn) => (chain = chain.catch(() => {}).then(fn));
+const serial = (fn) => (chain = chain.catch(() => { }).then(fn));
 
 // ---------- validation (used on import and when reading) ----------
 function cleanDomain(d) {
@@ -49,6 +49,13 @@ export async function loadSettings() {
 };
 
 export const setRestoreEnabled = (on) => chrome.storage.local.set({ [KEYS.RESTORE]: !!on });
+
+export async function getTheme() {
+  const t = (await chrome.storage.local.get(KEYS.THEME))[KEYS.THEME];
+  return t === "light" || t === "dark" ? t : null; // null = follow system
+};
+
+export const setTheme = (t) => chrome.storage.local.set({ [KEYS.THEME]: t });
 
 export async function getDomain(host) {
   if (!validHost(host)) return null;
