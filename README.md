@@ -6,8 +6,7 @@ Per-tab volume control and equalizer for Chrome. Boost or cut any tab up to 600%
 
 [![Chrome Web Store Version](https://img.shields.io/chrome-web-store/v/olneekddmihbnpiccgogmjjjpalpelfj?logo=chromewebstore)](https://chromewebstore.google.com/detail/sound-controller-eq/olneekddmihbnpiccgogmjjjpalpelfj)
 
-
-## Features 
+## Features
 
 - **Per-tab volume:** 0% to 600%, with fine steps near 100%. Slider, +/- buttons, and mouse wheel.
 - **10-band equalizer:** 60 Hz to 16 kHz, plus 4 presets (flat, bass, voice, treble). Closing the EQ panel bypasses it without losing your values.
