@@ -358,7 +358,7 @@ async function hydrate() {
 async function initMaster() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     masterTab = tab ?? null;
-    const ok = !!tab && /^https?:/.test(tab.url ?? "");
+    const ok = !!tab && /^(https?|file):/.test(tab.url ?? "");
     $("controls").inert = !ok;
     $("targetName").textContent = ok ? tab.title : "This page cannot be controlled";
     setIcon($("targetIcon"), tab?.favIconUrl);
