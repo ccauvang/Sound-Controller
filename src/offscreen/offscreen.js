@@ -7,6 +7,7 @@ function release(tabId) {
     const hasAudioTab = audio.get(tabId);
     if (!hasAudioTab) return;
     audio.delete(tabId);
+    clearTimeout(hasAudioTab.bypassTimer);
     hasAudioTab.stream.getTracks().forEach((t) => t.stop());
     hasAudioTab.ctx.close();
 };
@@ -37,18 +38,27 @@ async function capture(tabId, streamId, volume, host) {
     limiter.ratio.value = 20;
     limiter.attack.value = 0.003;
     limiter.release.value = 0.1;
-    [source, ...filters, gain, limiter, ctx.destination].reduce((a, b) => a.connect(b)); // connect returns its target - reduce walks the chain
+    [source, gain, limiter, ctx.destination].reduce((a, b) => a.connect(b)); // starts flat - filters out of the chain, wire() adds them when eq moves
     if (ctx.state === "suspended") await ctx.resume(); // no user gesture in offscreen - context can start suspended and the captured tab goes silent
     stream.getAudioTracks()[0]?.addEventListener("ended", () => release(tabId));
-    audio.set(tabId, { ctx, stream, gain, filters, volume, host, eq: [...EQ_PRESETS.flat] });
+    audio.set(tabId, { ctx, stream, source, gain, limiter, filters, volume, host, eq: [...EQ_PRESETS.flat], flat: true, bypassTimer: null });
 };
 
 function setGain(tabId, volume) {
     const hasAudioTab = audio.get(tabId);
-    volume = Math.min(600, Math.max(0, Number(volume)));
+    volume = Math.min(600, Math.max(0, Number(volume) || 0));
     hasAudioTab.volume = volume;
     // 15ms ramp - hard jumps per slider tick make clicks
     hasAudioTab.gain.gain.setTargetAtTime(volume / 100, hasAudioTab.ctx.currentTime, 0.015);
+};
+
+function wire(a, flat) {
+    if (a.flat === flat) return;
+    a.source.disconnect();
+    a.filters.forEach((f) => f.disconnect());
+    const chain = flat ? [a.source, a.gain, a.limiter] : [a.source, ...a.filters, a.gain, a.limiter];
+    chain.reduce((x, y) => x.connect(y)); // gain -> limiter -> destination already connected, repeats are ignored
+    a.flat = flat;
 };
 
 function setEq(tabId, gains) {
@@ -57,7 +67,11 @@ function setEq(tabId, gains) {
     // never trust the sender - a bad gain value is loud, not just wrong
     const safe = gains.map((g) => Math.min(EQ_GAIN_RANGE[1], Math.max(EQ_GAIN_RANGE[0], Number(g) || 0)));
     hasAudioTab.eq = safe;
+    const flat = safe.every((g) => g === 0);
+    clearTimeout(hasAudioTab.bypassTimer);
+    if (!flat) wire(hasAudioTab, false); // filters sit at 0 dB until the ramp moves them - no click
     safe.forEach((g, i) => hasAudioTab.filters[i].gain.setTargetAtTime(g, hasAudioTab.ctx.currentTime, 0.015));
+    if (flat) hasAudioTab.bypassTimer = setTimeout(() => wire(hasAudioTab, true), 150); // let the ramp reach 0 first, else click
 };
 
 async function handle(msg) {
@@ -70,7 +84,7 @@ async function handle(msg) {
         }
         case ACTION.SET_VOLUME: {
             if (!audio.has(msg.tabId)) {
-                if (!msg.streamId) throw new Error("no stream id");
+                if (!msg.streamId) return { needStream: true }; // not captured - worker fetches a stream id and resends
                 await capture(msg.tabId, msg.streamId, msg.volume, msg.host);
             };
             setGain(msg.tabId, msg.volume);
@@ -78,8 +92,9 @@ async function handle(msg) {
         }
         case ACTION.SET_EQ: {
             if (!audio.has(msg.tabId)) {
-                if (!msg.streamId) throw new Error("no stream id");
+                if (!msg.streamId) return { needStream: true }; // not captured - worker fetches a stream id and resends
                 await capture(msg.tabId, msg.streamId, msg.volume, msg.host);
+                setGain(msg.tabId, msg.volume); // clamp and sanitize - capture() trusts raw volume
             };
             setEq(msg.tabId, msg.eq);
             return { ok: true };
@@ -92,7 +107,7 @@ async function handle(msg) {
         }
         case ACTION.TAB_CLOSED: {
             release(msg.tabId);
-            return { ok: true };
+            return { ok: true };    
         }
     };
 };

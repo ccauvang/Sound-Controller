@@ -23,56 +23,74 @@ async function getAudibleTabs() {
 
 const OFFSCREEN_URL = "src/offscreen/offscreen.html";
 let creating = null;
+let offscreenUp = false; // cached - getContexts on every tick is wasted work
 
 async function hasOffscreen() {
+    if (offscreenUp) return true;
     const found = await chrome.runtime.getContexts({
         contextTypes: ["OFFSCREEN_DOCUMENT"],
         documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)]
     });
-    return found.length > 0;
+    return (offscreenUp = found.length > 0);
 };
 
 async function ensureOffscreen() {
     if (await hasOffscreen()) return;
-    // two quick slider ticks would both try to create - chrome allows only one document
     creating ??= chrome.offscreen.createDocument({
         url: OFFSCREEN_URL,
         reasons: ["USER_MEDIA"],
         justification: "Capture tab audio to change volume and apply EQ"
-    }).finally(() => { creating = null; });
+    }).then(() => { offscreenUp = true; }).finally(() => { creating = null; });
     await creating;
 };
 
-const toOffscreen = (msg) => chrome.runtime.sendMessage({ target: TARGET.OFFSCREEN, ...msg });
+const toOffscreen = async (msg) => {
+    try { return await chrome.runtime.sendMessage({ target: TARGET.OFFSCREEN, ...msg }); }
+    catch (e) { offscreenUp = false; throw e; } // doc gone - recheck next time
+};
 const hostFor = async (tabId) => hostOf((await chrome.tabs.get(tabId)).url ?? "");
 
-async function doSetVolume(tabId, volume, { force = false, persist = true } = {}) {
-    const live = (await hasOffscreen()) && (await toOffscreen({ action: ACTION.HAS_TAB, tabId }));
-    if (!live && volume === 100 && !force) {
-        if (persist) persistVolume(tabId, volume); // user picked 100 on an uncaptured tab - still forget the saved value
-        return { ok: true, captured: false };
-    };
-    await ensureOffscreen();
-    const streamId = live ? null : await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-    const res = await toOffscreen({ action: ACTION.SET_VOLUME, tabId, volume, streamId, host: live ? null : await hostFor(tabId) });
+// live tab = 1 message. not captured = offscreen says needStream, only then ask chrome for one
+async function tryLive(tabId, msg) {
+    if (!(await hasOffscreen())) return false;
+    let res;
+    try { res = await toOffscreen({ ...msg, tabId }); } catch { return false; } // doc died - cold path recreates it
     if (res?.error) throw new Error(res.error);
+    return res?.ok === true;
+};
+
+async function captureAndSend(tabId, msg) {
+    await ensureOffscreen();
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    const res = await toOffscreen({ ...msg, tabId, streamId, host: await hostFor(tabId) });
+    if (res?.error) throw new Error(res.error);
+};
+
+async function doSetVolume(tabId, volume, { force = false, persist = true } = {}) {
+    const msg = { action: ACTION.SET_VOLUME, volume };
+    if (!(await tryLive(tabId, msg))) {
+        if (volume === 100 && !force) {
+            if (persist) persistVolume(tabId, volume); // user picked 100 on an uncaptured tab - still forget the saved value
+            return { ok: true, captured: false };
+        };
+        await captureAndSend(tabId, msg);
+    };
     if (persist) persistVolume(tabId, volume);
-    updateBadge(tabId);
+    updateBadgeLater(tabId);
     return { ok: true, captured: true };
 };
 
 async function doSetEq(tabId, eq, volume, { persist = true } = {}) {
-    const live = (await hasOffscreen()) && (await toOffscreen({ action: ACTION.HAS_TAB, tabId }));
-    if (!live && eq.every((g) => g === 0)) {
-        if (persist) persistEq(tabId, eq); // flat on uncaptured tab - nothing to capture, still forget saved eq
-        return { ok: true, captured: false };
+    const msg = { action: ACTION.SET_EQ, eq, volume };
+    if (!(await tryLive(tabId, msg))) {
+        if (eq.every((g) => g === 0)) {
+            if (persist) persistEq(tabId, eq); // flat on uncaptured tab - nothing to capture, still forget saved eq
+            return { ok: true, captured: false };
+        };
+        await captureAndSend(tabId, msg);
     };
-    await ensureOffscreen();
-    const streamId = live ? null : await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-    const res = await toOffscreen({ action: ACTION.SET_EQ, tabId, eq, volume, streamId, host: live ? null : await hostFor(tabId) });
-    if (res?.error) throw new Error(res.error);
     if (persist) persistEq(tabId, eq);
-    updateBadge(tabId);
+    updateBadgeLater(tabId);
     return { ok: true, captured: true };
 };
 
@@ -86,7 +104,14 @@ function enqueue(tabId, job) {
     return next;
 };
 
-const setVolume = (tabId, volume, opts) => enqueue(tabId, () => doSetVolume(tabId, volume, opts));
+const latestVol = new Map(); // tabId -> newest wanted volume
+const setVolume = (tabId, volume, opts) => {
+    latestVol.set(tabId, volume);
+    return enqueue(tabId, () => {
+        if (!opts?.force && latestVol.get(tabId) !== volume) return { ok: true, skipped: true }; // newer tick queued behind this one
+        return doSetVolume(tabId, volume, opts);
+    });
+};
 const setEq = (tabId, eq, volume, opts) => enqueue(tabId, () => doSetEq(tabId, eq, volume, opts)); // same queue as volume - first capture must not race
 const saveTimers = new Map(); // tabId -> timer
 
@@ -139,6 +164,12 @@ const BADGE_COLORS = {
     loud: ["#FF3D3D", "#FFFFFF"]
 };
 
+const badgeTimers = new Map();
+const updateBadgeLater = (tabId) => {
+    clearTimeout(badgeTimers.get(tabId));
+    badgeTimers.set(tabId, setTimeout(() => { badgeTimers.delete(tabId); updateBadge(tabId); }, 150)); // drag = 1 paint, not 60
+};
+
 async function updateBadge(tabId) {
     try {
         const audioStates = (await getAudioStates())[tabId];
@@ -180,11 +211,14 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     // chrome wipes per-tab badge on navigation, capture survives it - paint again or user thinks ext is off
-    if (changeInfo.status) updateBadge(tabId);
+    if (changeInfo.status) updateBadgeLater(tabId);
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
     queues.delete(tabId);
+    latestVol.delete(tabId);
+    clearTimeout(badgeTimers.get(tabId));
+    badgeTimers.delete(tabId);
     if (await hasOffscreen()) toOffscreen({ action: ACTION.TAB_CLOSED, tabId }).catch(() => { });
 });
 

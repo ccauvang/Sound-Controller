@@ -60,9 +60,13 @@ function setupRange(range, onVolume) {
         paint(range);
         onVolume(VOLUME_STEPS[range.value]);
     });
+    let lastWheel = 0;
     range.addEventListener("wheel", (e) => {
-        if (range.disabled) return; // nudge fires input by script - disabled flag does not stop it. return before preventDefault so the popup still scrolls
         e.preventDefault(); // else the popup scrolls too
+        if (range.disabled) return;
+        const now = performance.now();
+        if (now - lastWheel < 50) return; // trackpad fires wheel dozens/sec
+        lastWheel = now;
         nudge(range, e.deltaY < 0 ? 1 : -1);
     }, { passive: false });
 };
@@ -140,21 +144,26 @@ $("volReset").onclick = () => masterTab && applyVolume(masterTab.id, VOLUME_DEFA
 // ---------- EQ ----------
 const eqSliders = [];
 
+let eqBusy = false, eqDirty = false;
+
 async function pushEq() {
     const tabId = masterTab.id;
-    const state = getState(tabId);
-    const eq = state.eqOn ? state.eq : EQ_PRESETS.flat; // closed panel = bypass, values kept for reopen
     syncRow(tabId);
-    let res;
+    if (eqBusy) { eqDirty = true; return; } // drag = dozens of ticks - one in flight, rerun once with newest bands
+    eqBusy = true;
     try {
-        res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.SET_EQ, tabId, eq, volume: state.volume });
+        do {
+            eqDirty = false;
+            const state = getState(tabId); // read fresh each loop - newest bands
+            const eq = state.eqOn ? state.eq : EQ_PRESETS.flat; // closed panel = bypass, values kept for reopen
+            const res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.SET_EQ, tabId, eq, volume: state.volume });
+            if (res?.error) { say($("volMsg"), res.error); break; };
+            if (res?.captured) { captured.add(tabId); syncRow(tabId); };
+        } while (eqDirty);
     } catch (e) {
-        return say($("volMsg"), e.message);
-    };
-    if (res?.error) return say($("volMsg"), res.error);
-    if (res?.captured) {
-        captured.add(tabId);
-        syncRow(tabId);
+        say($("volMsg"), e.message);
+    } finally {
+        eqBusy = false;
     };
 };
 
@@ -326,7 +335,7 @@ async function load() {
 
 async function openOnTab(tab) {
     // popup open on this tab is the only moment chrome allows capture - restore the saved volume, or at least unlock
-    const res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.RESTORE_TAB, tabId: tab.id });
+    const res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.RESTORE_TAB, tabId: tab.id }).catch((e) => ({ error: e.message }));
     if (res?.error) return say($("volMsg"), res.error);
     if (res?.volume != null) {
         captured.add(tab.id);
@@ -344,7 +353,7 @@ async function openOnTab(tab) {
 // ---------- boot ----------
 async function hydrate() {
     // popup state dies on close - ask the worker what is really playing at what gain
-    const live = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.GET_AUDIO_STATES });
+    const live = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.GET_AUDIO_STATES }).catch(() => null);
     if (!live || live.error) return;
     for (const [id, a] of Object.entries(live)) {
         const state = getState(Number(id));
@@ -424,11 +433,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 root.dataset.theme = currentTheme(); // sync first so system-light users see no dark flash
-const savedTheme = await getTheme();
-if (savedTheme) root.dataset.theme = savedTheme;
-
 buildEq();
-await refreshSettingsUi();
-await hydrate();
+const [savedTheme] = await Promise.all([getTheme(), refreshSettingsUi(), hydrate()]);
+if (savedTheme) root.dataset.theme = savedTheme;
 await initMaster();
 await load();
