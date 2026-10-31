@@ -372,6 +372,7 @@ async function initMaster() {
     $("targetName").textContent = ok ? tab.title : "This page cannot be controlled";
     setIcon($("targetIcon"), tab?.favIconUrl);
     if (ok) syncMaster(tab.id);
+    else setRange($("volRange"), VOLUME_DEFAULT); // inert page skips syncMaster - slider would sit at input midpoint while text says 100
     // popup open on this tab = the only moment chrome allows capture, so take it now
     if (ok && !captured.has(tab.id)) await openOnTab(tab);
 };
