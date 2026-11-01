@@ -1,7 +1,24 @@
 import { TARGET, ACTION } from "../shared/messages.js";
 import { VOLUME_STEPS, VOLUME_DEFAULT, indexOfVolume } from "../shared/volume.js";
 import { EQ_BANDS, EQ_GAIN_RANGE, EQ_PRESETS } from "../shared/eq.js";
-import { hostOf, loadSettings, setRestoreEnabled, buildExport, importSettings, undoImport, hasBackup, getTheme, setTheme, MAX_IMPORT_BYTES } from "../shared/settings.js";
+import {
+    hostOf,
+    loadSettings,
+    setRestoreEnabled,
+    buildExport,
+    importSettings,
+    undoImport,
+    hasBackup,
+    getTheme,
+    setTheme,
+    loadProfiles,
+    saveProfile,
+    deleteProfile,
+    renameProfile,
+    MAX_PROFILE_NAME,
+    MAX_PROFILES,
+    MAX_IMPORT_BYTES
+} from "../shared/settings.js";
 
 const $ = (id) => document.getElementById(id);
 const MAX_INDEX = VOLUME_STEPS.length - 1;
@@ -13,6 +30,11 @@ const HINT_CURRENT = "Current tab. Use the controls above.";
 
 // per tab state lives here until the capture step moves it into the service worker - popup close wipes it
 const state = new Map();
+let profiles = [];
+let knownKeys = new Set(); // gains of every built-in preset and custom profile - one lookup tells if sliders match something saved
+const eqKey = (eq) => eq.join(","); // plain string, cannot collide like a hash
+const safeEq = (eq) => (Array.isArray(eq) && eq.length === EQ_BANDS.length ? [...eq] : [...EQ_PRESETS.flat]); // worker reply can miss eq - spread of undefined would kill boot
+
 const getState = (id) => {
     if (!state.has(id)) state.set(id, { volume: VOLUME_DEFAULT, eqOn: false, eq: [...EQ_PRESETS.flat] });
     return state.get(id);
@@ -114,6 +136,7 @@ function syncMaster(tabId) {
     eqSliders.forEach((s, i) => { s.value = state.eq[i]; });
     $("eqToggle").setAttribute("aria-expanded", String(state.eqOn));
     $("eqBody").classList.toggle("open", state.eqOn);
+    syncEqUi();
 };
 
 function syncRow(tabId) {
@@ -159,12 +182,41 @@ async function pushEq() {
             const res = await chrome.runtime.sendMessage({ target: TARGET.SERVICE_WORKER, action: ACTION.SET_EQ, tabId, eq, volume: state.volume });
             if (res?.error) { say($("volMsg"), res.error); break; };
             if (res?.captured) { captured.add(tabId); syncRow(tabId); };
+            syncEqUi();
         } while (eqDirty);
     } catch (e) {
         say($("volMsg"), e.message);
     } finally {
         eqBusy = false;
     };
+};
+
+function applyEq(gains) {
+    if (!masterTab) return;
+    getState(masterTab.id).eq = [...gains];
+    eqSliders.forEach((s, i) => { s.value = gains[i]; });
+    pushEq();
+};
+
+function rebuildKnown() {
+    knownKeys = new Set([...Object.values(EQ_PRESETS), ...profiles.map((p) => p.eq)].map(eqKey));
+};
+
+function syncEqUi() {
+    if (!masterTab) return;
+    const key = eqKey(getState(masterTab.id).eq);
+    const match = profiles.find((p) => eqKey(p.eq) === key);
+    $("profilePick").hidden = profiles.length === 0;
+    if (!profiles.length) setPickOpen(false); // last profile deleted - panel must not stay open behind a hidden wrapper
+    $("profileLabel").textContent = match ? match.name : "Pick Custom Preset";
+    $("profileTrigger").classList.toggle("active", !!match);
+    for (const li of $("profileList").children) li.classList.toggle("active", li.dataset.id === match?.id);
+    // row stays visible at the cap so the user sees why save is gone - disabled beats a silent hide
+    const full = profiles.length >= MAX_PROFILES;
+    $("profileSaveRow").hidden = knownKeys.has(key);
+    $("profileName").disabled = full;
+    $("profileSave").disabled = full;
+    $("profileName").placeholder = full ? `Limit reached (${MAX_PROFILES})` : "Profile name";
 };
 
 function buildEq() {
@@ -199,12 +251,7 @@ function buildEq() {
         chip.type = "button";
         chip.className = "chip";
         chip.textContent = name;
-        chip.addEventListener("click", () => {
-            if (!masterTab) return;
-            getState(masterTab.id).eq = [...gains];
-            eqSliders.forEach((s, i) => { s.value = gains[i]; });
-            pushEq();
-        });
+        chip.addEventListener("click", () => applyEq(gains));
         $("eqPresets").append(chip);
     };
 };
@@ -217,6 +264,154 @@ $("eqToggle").onclick = () => {
     $("eqBody").classList.toggle("open", state.eqOn);
     pushEq();
 };
+
+// ---------- custom profiles ----------
+const X_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+const EDIT_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>';
+
+function setPickOpen(open) {
+    $("profilePanel").classList.toggle("open", open);
+    $("profileTrigger").setAttribute("aria-expanded", String(open));
+};
+
+async function renderProfiles() {
+    profiles = await loadProfiles();
+    rebuildKnown();
+    $("profileList").replaceChildren(...profiles.map(buildPickRow));
+    syncEqUi();
+};
+
+function buildPickRow(p) {
+    const li = document.createElement("li");
+    li.className = "pick-row";
+    li.dataset.id = p.id;
+
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "pick-item";
+    pick.textContent = p.name; // textContent - names can come from an imported file
+    pick.title = p.name;
+    pick.addEventListener("click", () => { applyEq(p.eq); setPickOpen(false); });
+
+    // sibling button, not nested - a button inside a button is invalid html
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "pick-x";
+    del.innerHTML = X_SVG; // constant string, no user text
+    del.title = "Click 3 times fast to delete";
+    del.setAttribute("aria-label", `Delete ${p.name}, press 3 times fast`);
+    armDelete(del, p.id);
+
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "pick-edit";
+    edit.innerHTML = EDIT_SVG; // constant string, no user text
+    edit.title = "Rename";
+    edit.setAttribute("aria-label", `Rename ${p.name}`);
+    edit.addEventListener("click", () => startRename(li, pick, p));
+
+    li.append(pick, edit, del);
+    return li;
+};
+
+function startRename(li, pick, p) {
+    if (li.querySelector(".pick-input")) return;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "pick-input";
+    input.maxLength = MAX_PROFILE_NAME;
+    input.value = p.name;
+    input.setAttribute("aria-label", `New name for ${p.name}`);
+
+    let done = false; // renderProfiles removes the input, which fires blur - without this flag finish runs twice
+    const finish = async (commit, fromBlur = false) => {
+        if (done) return;
+        done = true;
+        const name = input.value.trim();
+        if (commit && name && name !== p.name) {
+            try {
+                await renameProfile(p.id, name);
+            } catch (e) {
+                say($("eqMsg"), e.message);
+                if (!fromBlur) { // enter - keep the input open so the user fixes the name instead of retyping it
+                    done = false;
+                    input.classList.add("bad");
+                    input.focus();
+                    return;
+                };
+                // blur - focus already moved on, drop the edit and keep the old name
+            };
+        };
+        await renderProfiles();
+    };
+
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); finish(true); }
+        else if (e.key === "Escape") { e.stopPropagation(); finish(false); } // panel handler would close the whole list
+    });
+    input.addEventListener("input", () => input.classList.remove("bad"));
+    input.addEventListener("blur", () => finish(true, true)); // click away saves, bad name falls back to the old one
+
+    pick.replaceWith(input);
+    input.focus();
+    input.select();
+};
+
+// own counter instead of e.detail - keyboard Enter gives detail 0 and would never delete
+function armDelete(btn, id) {
+    let hits = 0;
+    let timer;
+    const reset = () => { hits = 0; delete btn.dataset.hits; };
+    btn.addEventListener("click", async () => {
+        hits++;
+        clearTimeout(timer);
+        if (hits < 3) {
+            btn.dataset.hits = hits; // css turns this into the color and the number
+            timer = setTimeout(reset, 700);
+            return;
+        };
+        reset();
+        await deleteProfile(id);
+        await renderProfiles();
+    });
+};
+
+$("profileTrigger").onclick = () => setPickOpen($("profileTrigger").getAttribute("aria-expanded") !== "true");
+
+document.addEventListener("click", (e) => {
+    if (!$("profilePick").contains(e.target)) setPickOpen(false);
+});
+
+$("profilePick").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+        setPickOpen(false);
+        $("profileTrigger").focus();
+        return;
+    };
+    const items = [...$("profileList").querySelectorAll(".pick-item")];
+    const at = items.indexOf(document.activeElement);
+    if (at < 0) return;
+    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    items[Math.min(items.length - 1, Math.max(0, to))].focus();
+});
+
+async function saveCurrentProfile() {
+    if (!masterTab) return;
+    const name = $("profileName").value.trim();
+    if (!name) return say($("eqMsg"), "Enter a name first");
+    try {
+        await saveProfile(name, getState(masterTab.id).eq);
+        $("profileName").value = "";
+        await renderProfiles(); // key now matches the new profile, so save row hides itself
+    } catch (e) {
+        say($("eqMsg"), e.message);
+    };
+};
+
+$("profileSave").onclick = saveCurrentProfile;
+$("profileName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveCurrentProfile(); });
 
 // ---------- auto restore switch ----------
 const restoreSw = $("restoreSwitch");
@@ -341,8 +536,8 @@ async function openOnTab(tab) {
         captured.add(tab.id);
         const state = getState(tab.id);
         state.volume = res.volume;
-        state.eq = [...res.eq];
-        state.eqOn = !isFlat(res.eq);
+        state.eq = safeEq(res.eq);
+        state.eqOn = !isFlat(state.eq);
         syncMaster(tab.id);
         syncRow(tab.id);
     } else if (tab.audible) {
@@ -359,8 +554,8 @@ async function hydrate() {
         const state = getState(Number(id));
         captured.add(Number(id));
         state.volume = a.volume;
-        state.eq = [...a.eq];
-        state.eqOn = !isFlat(a.eq);
+        state.eq = safeEq(a.eq);
+        state.eqOn = !isFlat(state.eq);
     };
 };
 
@@ -389,7 +584,7 @@ $("exportBtn").onclick = async () => {
     const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "sound-controller-settings.json" });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    say($("settingsMsg"), `Exported ${Object.keys(data.domains).length} sites`, false);
+    say($("settingsMsg"), `Exported ${Object.keys(data.domains).length} sites, ${data.profiles.length} profiles`, false);
 };
 
 $("importBtn").onclick = () => $("importFile").click();
@@ -400,16 +595,18 @@ $("importFile").onchange = async () => {
     try {
         if (file.size > MAX_IMPORT_BYTES) throw new Error("File too big");
         const r = await importSettings(await file.text(), $("importReplace").checked);
-        say($("settingsMsg"), `Imported ${r.imported} sites${r.skipped ? `, skipped ${r.skipped} bad rows` : ""}. Applies when you open each site.`, false);
+        say($("settingsMsg"), `Imported ${r.imported} sites, ${r.profiles} profiles${r.skipped ? `, skipped ${r.skipped} bad rows` : ""}. Applies when you open each site.`, false);
     } catch (e) {
         say($("settingsMsg"), e.message);
     };
     await refreshSettingsUi();
+    await renderProfiles(); // select list would show stale profiles otherwise
 };
 
 $("undoImport").onclick = async () => {
     try { await undoImport(); say($("settingsMsg"), "Import undone", false); } catch (e) { say($("settingsMsg"), e.message); };
     await refreshSettingsUi();
+    await renderProfiles();
 };
 
 chrome.runtime.onMessage.addListener((msg) => {
@@ -419,8 +616,8 @@ chrome.runtime.onMessage.addListener((msg) => {
         // popup state is stale after the worker reset the tab - a later eq tick would resend old bands
         const state = getState(msg.tabId);
         state.volume = msg.volume;
-        state.eq = [...msg.eq];
-        state.eqOn = !isFlat(msg.eq);
+        state.eq = safeEq(msg.eq);
+        state.eqOn = !isFlat(state.eq);
         syncMaster(msg.tabId);
         syncRow(msg.tabId);
     };
@@ -435,6 +632,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 root.dataset.theme = currentTheme(); // sync first so system-light users see no dark flash
 buildEq();
+$("profileName").maxLength = MAX_PROFILE_NAME; // html copy of the number would drift from settings.js
+await renderProfiles();
 const [savedTheme] = await Promise.all([getTheme(), refreshSettingsUi(), hydrate()]);
 if (savedTheme) root.dataset.theme = savedTheme;
 await initMaster();

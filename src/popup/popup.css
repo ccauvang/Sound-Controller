@@ -26,9 +26,15 @@
     --warm: #FFB020;
     --warm-soft: rgba(255, 176, 32, 0.16);
     --danger: #ff3d3d;
+    --bg-danger: #fd3b3b29;
     --mute: #313131;
     --bandTrackLight: #CBD3DE;
     color-scheme: dark;
+}
+
+[hidden] {
+    display: none !important;
+    /* class display rules (flex, grid) beat the hidden attribute - bit us on the save row */
 }
 
 * {
@@ -115,7 +121,7 @@ button {
     height: 30px;
     padding: 0;
     border: 0;
-    border-radius: 8px;
+    border-radius: 5px;
     background: transparent;
     color: var(--dim);
     transition: background 0.15s, color 0.15s;
@@ -542,6 +548,10 @@ button {
     color: var(--warm);
 }
 
+.row__vol.supperboost {
+    color: var(--danger);
+}
+
 .row__eq {
     padding: 1px 6px;
     border-radius: 6px;
@@ -642,7 +652,7 @@ button {
     --bg: #F5F7FA;
     --surface: #FFFFFF;
     --surface-2: #EDF1F6;
-    --line: #D9E0D9;
+    --line: #D9E0E9;
     --text: #161B22;
     --icon: #161B22;
     --dim: #5F6B7A;
@@ -654,4 +664,230 @@ button {
 
 :root[data-theme="light"] .eq-slider::-webkit-slider-runnable-track {
     background: var(--bandTrackLight);
+}
+
+.profile-save {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+
+.profile-name {
+    flex: 1;
+    min-width: 0;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    transition: border-color 0.15s;
+}
+
+.profile-name:hover {
+    border-color: var(--accent);
+}
+
+.profile-name:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.profile-name::placeholder {
+    color: var(--dim);
+}
+
+.profile-save .icon-btn {
+    flex: none;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+}
+
+.profile-save .icon-btn:hover {
+    border-color: var(--accent);
+}
+
+.profile-name:disabled,
+.profile-save .icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.profile-pick {
+    margin-top: 10px;
+}
+
+.pick-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--surface-2);
+    text-align: left;
+    transition: border-color 0.15s;
+}
+
+.pick-trigger:hover {
+    border-color: var(--accent);
+}
+
+.pick-trigger:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.pick-trigger.active {
+    border-color: var(--warm);
+}
+
+.pick-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: 5px;
+}
+
+.pick-list {
+    max-height: 150px;
+    margin: 6px 0 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--surface-2);
+}
+
+.pick-row {
+    display: flex;
+    align-items: center;
+}
+
+.pick-row+.pick-row {
+    border-top: 1px solid var(--line);
+}
+
+.pick-row.active .pick-item {
+    color: var(--warm);
+    font-weight: 600;
+}
+
+.pick-item {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 10px;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pick-item:hover,
+.pick-item:focus-visible {
+    background: var(--line);
+    outline: 0;
+}
+
+.pick-x {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid;
+    border-left-color: transparent;
+    border-top-right-radius: 5px;
+    border-bottom-right-radius: 5px;
+    border-top-left-radius: none;
+    border-bottom-left-radius: none;
+    background: transparent;
+    color: var(--dim);
+}
+
+.pick-x:hover,
+.pick-x:focus-visible {
+    color: var(--danger);
+    border-left-color: var(--danger);
+}
+
+/* data-hits rules go after hover - same specificity, later wins */
+.pick-x[data-hits] svg {
+    display: none;
+}
+
+.pick-x[data-hits]::after {
+    content: attr(data-hits);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1;
+}
+
+.pick-x[data-hits="1"] {
+    background: var(--warm-soft);
+    color: var(--warm);
+    border-color: var(--warm);
+}
+
+.pick-x[data-hits="2"] {
+    background: var(--bg-danger);
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
+.pick-edit {
+    display: grid;
+    place-items: center;
+    margin-right: -1px;
+    flex: none;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid;
+    border-right-color: transparent;
+    border-top-right-radius: none;
+    border-bottom-right-radius: none;
+    border-top-left-radius: 5px;
+    border-bottom-left-radius: 5px;
+    background: transparent;
+    color: var(--dim);
+}
+
+.pick-edit:hover,
+.pick-edit:focus-visible {
+    color: var(--accent);
+    border-right-color: var(--accent);
+}
+
+.pick-input {
+    flex: 1;
+    min-width: 0;
+    height: 30px;
+    margin: 0 4px 0 6px;
+    padding: 0 8px;
+    border: 1px solid var(--accent);
+    border-radius: 5px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+}
+
+.pick-input:focus-visible {
+    outline: 0;
+}
+
+.pick-input.bad {
+    border-color: var(--danger);
 }

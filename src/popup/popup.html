@@ -56,7 +56,8 @@
 
     <div id="controls">
         <section class="card" id="master">
-            <div class="target"><img id="targetIcon" width="14" height="14" alt="Target Icon" draggable="false"><span id="targetName"></span></div>
+            <div class="target"><img id="targetIcon" width="14" height="14" alt="Target Icon" draggable="false"><span
+                    id="targetName"></span></div>
             <div class="vol">
                 <button id="volDown" class="step-btn" type="button" aria-label="Volume down">-</button>
                 <input id="volRange" class="slider" type="range" aria-label="Volume">
@@ -85,7 +86,29 @@
                 <div class="collapse__inner">
                     <div class="eq__pad">
                         <div id="eqPresets" class="chips"></div>
+                        <div id="profilePick" class="profile-pick" hidden>
+                            <button id="profileTrigger" class="pick-trigger" type="button" aria-expanded="false"
+                                aria-controls="profilePanel">
+                                <span id="profileLabel" class="pick-label">Pick Custom Preset</span>
+                                <span class="chev"></span>
+                            </button>
+                            <div id="profilePanel" class="collapse">
+                                <div class="collapse__inner">
+                                    <ul id="profileList" class="pick-list" aria-label="My EQ profiles"></ul>
+                                </div>
+                            </div>
+                        </div>
                         <div id="eqBands" class="bands"></div>
+                        <div id="profileSaveRow" class="profile-save" hidden>
+                            <input id="profileName" class="profile-name" type="text" maxlength="24"
+                                placeholder="Profile name" aria-label="Profile name">
+                            <button id="profileSave" class="icon-btn" type="button" aria-label="Save profile">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M4 4h12l4 4v12H4z" />
+                                </svg>
+                            </button>
+                        </div>
+                        <p id="eqMsg" class="msg" role="status"></p>
                     </div>
                 </div>
             </div>
@@ -93,7 +116,7 @@
     </div>
 
     <section>
-        <h2 class="sec-title">Have Auido Now</h2>
+        <h2 class="sec-title">Playing Audio Now</h2>
         <p id="listMsg" class="msg" role="status"></p>
         <p id="empty" class="empty">No tab playing audio</p>
         <ul id="list" class="list"></ul>

@@ -1,11 +1,13 @@
-import { EQ_BANDS, EQ_GAIN_RANGE } from "./eq.js";
+import { EQ_BANDS, EQ_GAIN_RANGE, EQ_PRESETS } from "./eq.js";
 
-export const KEYS = { RESTORE: "restoreEnabled", DOMAINS: "domains", BACKUP: "backup", THEME: "theme" };
+export const KEYS = { RESTORE: "restoreEnabled", DOMAINS: "domains", BACKUP: "backup", PROFILES: "eqProfiles", THEME: "theme" };
 export const MAX_IMPORT_BYTES = 1000000;
 const APP = "sound-controller-eq";
 const SCHEMA = 1;
 const VOLUME_RANGE = [0, 600];
 const MAX_DOMAINS = 2000;
+export const MAX_PROFILES = 60;
+export const MAX_PROFILE_NAME = 24; // popup input maxlength reads this too
 const BAD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const HOST_RE = /^(?=.{1,253}$)([a-z0-9_-]+\.)*[a-z0-9_-]+$/;
 
@@ -38,6 +40,29 @@ function cleanDomains(raw) {
     if (!validHost(key)) continue; // bad row is skipped, rest still imports
     const clean = cleanDomain(d);
     if (clean) out[key] = clean;
+  };
+  return out;
+};
+
+const cleanEq = (eq) => Array.isArray(eq) && eq.length === EQ_BANDS.length
+  ? eq.map((g) => (Number.isFinite(g) ? Math.round(clamp(g, EQ_GAIN_RANGE)) : 0))
+  : null;
+
+function cleanProfiles(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const names = new Set();
+  const ids = new Set();
+  for (const p of raw.slice(0, MAX_PROFILES)) {
+    const name = typeof p?.name === "string" ? p.name.trim().slice(0, MAX_PROFILE_NAME) : "";
+    const eq = cleanEq(p?.eq);
+    const id = typeof p?.id === "string" && p.id.length > 0 && p.id.length <= 64 ? p.id : crypto.randomUUID(); // empty id would collide with nothing-selected
+    const low = name.toLowerCase();
+    // reserved built-in names would look identical in the popup - bad row is skipped, rest still loads
+    if (!name || !eq || names.has(low) || ids.has(id) || Object.hasOwn(EQ_PRESETS, low)) continue;
+    names.add(low);
+    ids.add(id);
+    out.push({ id, name, eq });
   };
   return out;
 };
@@ -80,15 +105,54 @@ function saveDomain(host, patch) {
 export const saveDomainVolume = (host, volume) => saveDomain(host, { volume });
 export const saveDomainEq = (host, eq) => saveDomain(host, { eq });
 
+export async function loadProfiles() {
+  return cleanProfiles((await chrome.storage.local.get({ [KEYS.PROFILES]: [] }))[KEYS.PROFILES]);
+};
+
+export function saveProfile(name, eq) {
+  return serial(async () => {
+    const list = await loadProfiles();
+    const clean = cleanProfiles([{ name, eq }])[0];
+    if (!clean) throw new Error("Bad or reserved name");
+    if (list.some((p) => p.name.toLowerCase() === clean.name.toLowerCase())) throw new Error("Name already used");
+    if (list.length >= MAX_PROFILES) throw new Error("Too many profiles");
+    list.push(clean);
+    await chrome.storage.local.set({ [KEYS.PROFILES]: list });
+    return clean;
+  });
+};
+
+export function deleteProfile(id) {
+  return serial(async () => {
+    const list = (await loadProfiles()).filter((p) => p.id !== id);
+    await chrome.storage.local.set({ [KEYS.PROFILES]: list });
+  });
+};
+
+export function renameProfile(id, name) {
+  return serial(async () => {
+    const list = await loadProfiles();
+    const cur = list.find((p) => p.id === id);
+    if (!cur) throw new Error("Profile not found");
+    const clean = cleanProfiles([{ id, name, eq: cur.eq }])[0]; // same trim, length and reserved-name rules as save
+    if (!clean) throw new Error("Bad or reserved name");
+    // skip self - a case-only rename (Gaming to gaming) must pass
+    if (list.some((p) => p.id !== id && p.name.toLowerCase() === clean.name.toLowerCase())) throw new Error("Name already used");
+    cur.name = clean.name;
+    await chrome.storage.local.set({ [KEYS.PROFILES]: list });
+  });
+};
+
 // ---------- export / import ----------
 export async function buildExport() {
-  const s = await chrome.storage.local.get({ [KEYS.RESTORE]: true, [KEYS.DOMAINS]: {} });
+  const s = await chrome.storage.local.get({ [KEYS.RESTORE]: true, [KEYS.DOMAINS]: {}, [KEYS.PROFILES]: [] });
   return {
     app: APP,
     schema: SCHEMA,
     exportedAt: new Date().toISOString(),
     settings: { restoreEnabled: s[KEYS.RESTORE] !== false },
-    domains: cleanDomains(s[KEYS.DOMAINS])
+    domains: cleanDomains(s[KEYS.DOMAINS]),
+    profiles: cleanProfiles(s[KEYS.PROFILES])
   };
 };
 
@@ -100,29 +164,21 @@ export function parseImport(text) {
   const rawDomain = raw.domains ?? {};
   if (typeof rawDomain !== "object" || Array.isArray(rawDomain)) throw new Error("Bad file: domains must be an object");
   const domains = cleanDomains(rawDomain);
+  const profiles = Array.isArray(raw.profiles) ? cleanProfiles(raw.profiles) : null; // null = old file with no profiles key - import must leave current ones alone
   return {
     restoreEnabled: raw.settings?.restoreEnabled !== false,
     domains,
-    skipped: Object.keys(rawDomain).length - Object.keys(domains).length
+    profiles,
+    skipped: Object.keys(rawDomain).length - Object.keys(domains).length + (profiles ? raw.profiles.length - profiles.length : 0)
   };
-};
-
-async function doImport(text, replace) {
-  const parsed = parseImport(text); // throws here = nothing written at all
-  const cur = await chrome.storage.local.get({ [KEYS.RESTORE]: true, [KEYS.DOMAINS]: {} });
-  const domains = replace ? parsed.domains : cleanDomains({ ...cleanDomains(cur[KEYS.DOMAINS]), ...parsed.domains });
-  await chrome.storage.local.set({ [KEYS.BACKUP]: { restoreEnabled: cur[KEYS.RESTORE] !== false, domains: cur[KEYS.DOMAINS] } });
-  await chrome.storage.local.set({
-    [KEYS.DOMAINS]: domains,
-    [KEYS.RESTORE]: replace ? parsed.restoreEnabled : cur[KEYS.RESTORE] !== false // merge keeps the user's current switch
-  });
-  return { imported: Object.keys(parsed.domains).length, skipped: parsed.skipped };
 };
 
 async function doUndo() {
   const backup = (await chrome.storage.local.get(KEYS.BACKUP))[KEYS.BACKUP];
   if (!backup) throw new Error("Nothing to undo");
-  await chrome.storage.local.set({ [KEYS.RESTORE]: backup.restoreEnabled !== false, [KEYS.DOMAINS]: cleanDomains(backup.domains) });
+  const restored = { [KEYS.RESTORE]: backup.restoreEnabled !== false, [KEYS.DOMAINS]: cleanDomains(backup.domains) };
+  if (Array.isArray(backup.profiles)) restored[KEYS.PROFILES] = cleanProfiles(backup.profiles); // backup made before profiles existed - leave current ones alone
+  await chrome.storage.local.set(restored);
   await chrome.storage.local.remove(KEYS.BACKUP);
 };
 
@@ -130,5 +186,28 @@ export async function hasBackup() {
   return (await chrome.storage.local.get(KEYS.BACKUP))[KEYS.BACKUP] != null;
 };
 
+function mergeProfiles(cur, incoming) {
+  const byName = new Map(cur.map((p) => [p.name.toLowerCase(), p]));
+  // fresh id - imported id could match a different local profile, and cleanProfiles drops duplicate ids
+  for (const p of incoming) byName.set(p.name.toLowerCase(), { ...p, id: crypto.randomUUID() }); // imported wins, same as domains
+  return cleanProfiles([...byName.values()]);
+};
+
+async function doImport(text, replace) {
+  const parsed = parseImport(text); // throws here = nothing written at all
+  const cur = await chrome.storage.local.get({ [KEYS.RESTORE]: true, [KEYS.DOMAINS]: {}, [KEYS.PROFILES]: [] });
+  const curProfiles = cleanProfiles(cur[KEYS.PROFILES]);
+  const domains = replace ? parsed.domains : cleanDomains({ ...cleanDomains(cur[KEYS.DOMAINS]), ...parsed.domains });
+  const profiles = !parsed.profiles ? curProfiles : replace ? parsed.profiles : mergeProfiles(curProfiles, parsed.profiles);
+  await chrome.storage.local.set({ [KEYS.BACKUP]: { restoreEnabled: cur[KEYS.RESTORE] !== false, domains: cur[KEYS.DOMAINS], profiles: cur[KEYS.PROFILES] } });
+  await chrome.storage.local.set({
+    [KEYS.DOMAINS]: domains,
+    [KEYS.PROFILES]: profiles,
+    [KEYS.RESTORE]: replace ? parsed.restoreEnabled : cur[KEYS.RESTORE] !== false // merge keeps the user's current switch
+  });
+  return { imported: Object.keys(parsed.domains).length, profiles: parsed.profiles?.length ?? 0, skipped: parsed.skipped };
+};
+
+// import reads then writes - run bare it can overwrite a save that landed in between
 export const importSettings = (text, replace) => serial(() => doImport(text, replace));
 export const undoImport = () => serial(doUndo);
