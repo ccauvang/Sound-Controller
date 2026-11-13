@@ -26,7 +26,7 @@ async function capture(tabId, streamId, volume, host) {
     const stream = await navigator.mediaDevices.getUserMedia({
         audio: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId } }
     });
-    const ctx = new AudioContext({ latencyHint: "balanced" });
+    const ctx = new AudioContext({ latencyHint: "playback" });
     const gain = ctx.createGain();
     gain.gain.value = volume / 100;
     const filters = buildFilters(ctx);
