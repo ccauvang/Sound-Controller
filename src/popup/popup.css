@@ -15,10 +15,10 @@
 :root {
     --font-title: "Ajax Sabon", Georgia, "Times New Roman", serif;
     --font-body: "Google Sans Flex", system-ui, sans-serif;
-    --bg: #0E1116;
-    --surface: #0e1116;
+    --bg: #0a0c0f;
+    --surface: #0a0c0f;
     --surface-2: #1F2630;
-    --line: #2A323D;
+    --line: #1F2630;
     --text: #E8ECF2;
     --icon: #E8ECF2;
     --dim: #8D98A8;
@@ -409,7 +409,8 @@ button {
     text-transform: capitalize;
 }
 
-.chip:hover {
+.chip:hover,
+.chip.active {
     border-color: var(--warm);
     color: var(--text);
 }
@@ -651,7 +652,7 @@ button {
 :root[data-theme="light"] {
     --bg: #F5F7FA;
     --surface: #FFFFFF;
-    --surface-2: #EDF1F6;
+    --surface-2: #dadada;
     --line: #D9E0E9;
     --text: #161B22;
     --icon: #161B22;

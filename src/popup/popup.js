@@ -166,6 +166,7 @@ $("volReset").onclick = () => masterTab && applyVolume(masterTab.id, VOLUME_DEFA
 
 // ---------- EQ ----------
 const eqSliders = [];
+const eqChips = [];
 
 let eqBusy = false, eqDirty = false;
 
@@ -205,6 +206,7 @@ function rebuildKnown() {
 function syncEqUi() {
     if (!masterTab) return;
     const key = eqKey(getState(masterTab.id).eq);
+    eqChips.forEach((c) => c.chip.classList.toggle("active", c.key === key));
     const match = profiles.find((p) => eqKey(p.eq) === key);
     $("profilePick").hidden = profiles.length === 0;
     if (!profiles.length) setPickOpen(false); // last profile deleted - panel must not stay open behind a hidden wrapper
@@ -253,6 +255,7 @@ function buildEq() {
         chip.textContent = name;
         chip.addEventListener("click", () => applyEq(gains));
         $("eqPresets").append(chip);
+        eqChips.push({ chip, key: eqKey(gains) });
     };
 };
 
