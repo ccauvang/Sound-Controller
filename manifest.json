@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sound Controller & EQ",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Per-tab volume control and equalizer. Remembers volume for each site and restores it when you open the popup once per tab.",
   "minimum_chrome_version": "116",
   "icons": {
